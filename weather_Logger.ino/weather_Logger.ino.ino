@@ -6,6 +6,8 @@
  
  Based off of the Sparkfun Weather Station by Nathan Seidle which is based off of Mike Grusin's USB Weather Board code.
 <https://learn.sparkfun.com/tutorials/weather-station-wirelessly-connected-to-wunderground>
+<https://github.com/sparkfun/Wimp_Weather_Station>
+
 
  Current:
  TBD for 2 seconds while transmitting
@@ -22,9 +24,10 @@
  */
 
 #include <avr/wdt.h> //We need watch dog for this program
-#include <Wire.h> //I2C needed for sensors
-#include "MPL3115A2.h" //Pressure sensor
-#include "HTU21D.h" //Humidity sensor
+#include <Wire.h>
+#include <Adafruit_AM2315.h>  //temp_humidty sensor
+
+
 
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //Hardware pin definitions
@@ -35,6 +38,14 @@ const byte RAIN = 2;
 
 // analog I/O pins
 const byte WDIR = A0;  //wiring is 5V to vane to A0
+
+//TEMP and Humidity Sensor
+// Connect RED of the AM2315 sensor to 5.0V
+// Connect BLACK to Ground
+// Connect SCL/WHITE to i2c clock - SCL pin with  10Kohm pullup resistors to 5v
+// Connect /SDA/YELLOW to i2c data - SDA pin with external 10Kohm pullup resistors to 5v
+
+Adafruit_AM2315 am2315;
 
 
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -76,24 +87,57 @@ void setup() {
     // turn on interrupts
     interrupts();
 
+    if (! am2315.begin()) {
+     Serial.println("AM2315 Sensor not found, check wiring & pullups!");
+     while (1);
+    }
+
 }
 
 void loop() {
 
   float windspeedmph; // [mph instantaneous wind speed]
   int winddir;
+  float humidity;
+  float temp;
 
   windspeedmph = get_wind_speed();
   winddir = get_wind_direction();
+  humidity = get_humidity();
+  temp = get_temp();
 
-  Serial.print("$,winddir=");
+  Serial.print("$winddir=");
   Serial.print(winddir);
   Serial.print(", windspeedmph= ");
-  Serial.println(windspeedmph, 1);
+  Serial.print(windspeedmph, 1);
+  Serial.print(",humidity=");
+  Serial.print(humidity, 1);
+  Serial.print(",temp=");
+  Serial.println(temp, 1);
 
   delay(1000);
 
 }
+
+//Returns the instataneous temp in farenheit
+float get_temp()
+{
+    float temp_c = am2315.readTemperature();
+    float temp_f;
+
+    temp_f = temp_c*1.8+32;
+
+  
+    return(temp_f);
+}
+
+//Returns the instataneous humidity
+float get_humidity()
+{
+    return(am2315.readHumidity());
+}
+
+
 
 //Returns the instataneous wind speed
 float get_wind_speed()
