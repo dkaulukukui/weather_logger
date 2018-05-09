@@ -14,10 +14,10 @@
  ~TBDmA during sleep
 
  Todo:
- - Temp sensor
- - Humidity
+ - rain
  - Pressure
  - light level
+ - DS1307 integration
  - SD card logging
  - watchdog timer
 
@@ -26,7 +26,8 @@
 #include <avr/wdt.h> //We need watch dog for this program
 #include <Wire.h>
 #include <Adafruit_AM2315.h>  //temp_humidty sensor
-
+#include <Adafruit_Sensor.h>  //adafruits unified sensor library required for lux sensor
+#include <Adafruit_TSL2561_U.h>
 
 
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -47,6 +48,8 @@ const byte WDIR = A0;  //wiring is 5V to vane to A0
 
 Adafruit_AM2315 am2315;
 
+//Lux sensor
+Adafruit_TSL2561_Unified tsl = Adafruit_TSL2561_Unified(TSL2561_ADDR_FLOAT, 12345);
 
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //Global Variables
@@ -57,9 +60,36 @@ volatile byte windClicks = 0;
 
 float windspeedmph; // [mph instantaneous wind speed]
 
+
+
+// volatiles are subject to modification by IRQs
+volatile unsigned long raintime, rainlast, raininterval, rain;
+
+float rainin; // [rain inches over the past hour)] -- the accumulated rainfall in the past 60 min
+volatile int dailyrainin; // [rain inches so far today in local time]
+volatile int rainHour[60]; //60 floating numbers to keep track of 60 minutes of rain
+
+byte minutes; //Keeps track of where we are in various arrays of data
+
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //Interrupt routines (these are called by the hardware interrupts, not by the main code)
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+void rainIRQ()
+// Count rain gauge bucket tips as they occur
+// Activated by the magnet and reed switch in the rain gauge, attached to input D2
+{
+    raintime = millis(); // grab current time
+    raininterval = raintime - rainlast; // calculate interval between this and last event
+
+    if (raininterval > 10) // ignore switch-bounce glitches less than 10mS after initial edge
+    {
+        dailyrainin += 1; //Each dump is 0.011" of water
+        rainHour[minutes] += 1; //Increase this minute's amount of rain
+
+        rainlast = raintime; // set up for next event
+    }
+}
+
 void wspeedIRQ()
 // Activated by the magnet in the anemometer (2 ticks per rotation), attached to input D3
 {
@@ -78,10 +108,11 @@ void setup() {
     Serial.begin(9600);
 
     pinMode(WSPEED, INPUT_PULLUP); // input from wind meters windspeed sensor
+    pinMode(RAIN, INPUT_PULLUP); // input from rain gauge sensor
 
 
     // attach external interrupt pins to IRQ functions
-    //attachInterrupt(0, rainIRQ, FALLING);
+    attachInterrupt(0, rainIRQ, FALLING);
     attachInterrupt(1, wspeedIRQ, FALLING);
 
     // turn on interrupts
@@ -92,6 +123,18 @@ void setup() {
      while (1);
     }
 
+    if(!tsl.begin())
+    {
+    /* There was a problem detecting the TSL2561 ... check your connections */
+    Serial.print("Ooops, no TSL2561 detected ... Check your wiring or I2C ADDR!");
+    while(1);
+    }
+
+      /* Setup the sensor gain and integration time */
+    configureSensor();
+    
+    Serial.println("HoFarm Weather Station Setup Complete");
+
 }
 
 void loop() {
@@ -100,11 +143,28 @@ void loop() {
   int winddir;
   float humidity;
   float temp;
+  float lux;
 
+  //lux sensor
+    /* Get a new lux sensor event */ 
+  sensors_event_t event;
+  tsl.getEvent(&event);
+
+  lux = event.light;
   windspeedmph = get_wind_speed();
   winddir = get_wind_direction();
   humidity = get_humidity();
   temp = get_temp();
+  
+
+  //Total rainfall for the day is calculated within the interrupt
+  //Calculate amount of rainfall for the last 60 minutes
+  rainin = 0;  
+  for(int i = 0 ; i < 60 ; i++)
+        rainin += rainHour[i];
+
+  float rainin_flt = rainin * 0.011;
+  float dailyrainin_flt = dailyrainin *0.011;
 
   Serial.print("$winddir=");
   Serial.print(winddir);
@@ -113,7 +173,13 @@ void loop() {
   Serial.print(",humidity=");
   Serial.print(humidity, 1);
   Serial.print(",temp=");
-  Serial.println(temp, 1);
+  Serial.print(temp, 1);
+  Serial.print(",rainin=");
+  Serial.print(rainin_flt, 2);
+  Serial.print(",dailyrainin=");
+  Serial.print(dailyrainin_flt, 2);
+  Serial.print(",lux=");
+  Serial.println(lux, 2);
 
   delay(1000);
 
@@ -127,7 +193,6 @@ float get_temp()
 
     temp_f = temp_c*1.8+32;
 
-  
     return(temp_f);
 }
 
@@ -197,3 +262,29 @@ int averageAnalogRead(int pinToRead)
 
     return(runningValue);
 }
+
+/**************************************************************************/
+/*
+    Configures the gain and integration time for the TSL2561
+*/
+/**************************************************************************/
+void configureSensor(void)
+{
+  /* You can also manually set the gain or enable auto-gain support */
+  // tsl.setGain(TSL2561_GAIN_1X);      /* No gain ... use in bright light to avoid sensor saturation */
+  // tsl.setGain(TSL2561_GAIN_16X);     /* 16x gain ... use in low light to boost sensitivity */
+  tsl.enableAutoRange(true);            /* Auto-gain ... switches automatically between 1x and 16x */
+  
+  /* Changing the integration time gives you better sensor resolution (402ms = 16-bit data) */
+  tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_13MS);      /* fast but low resolution */
+  // tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_101MS);  /* medium resolution and speed   */
+  // tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_402MS);  /* 16-bit data but slowest conversions */
+
+  /* Update these values depending on what you've set above! */  
+  Serial.println("------------------------------------");
+  Serial.print  ("Gain:         "); Serial.println("Auto");
+  Serial.print  ("Timing:       "); Serial.println("13 ms");
+  Serial.println("------------------------------------");
+}
+
+
