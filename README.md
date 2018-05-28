@@ -13,6 +13,10 @@ Requirements:
 - Light levels
 - Solar and battery powered
 
+Logged data format:
+
+Date,Time,Temp(F),Hum(%),Wsp(mph),Wdir(degT),Rain(in),Light(Lumens)
+
 
 BOM:
 - Arduino UNO
@@ -20,10 +24,12 @@ BOM:
 - Adafruit AM2315 Temp/Humidity sensor : (https://www.adafruit.com/product/1293)
 - Adafruit TSL2561 Luminosity Sensor : (https://www.adafruit.com/product/439)
 
-Libraries:
+Libraries Required:
 - Adafruit_AM2315 (https://github.com/adafruit/Adafruit_AM2315)
 - Adafruit_TSL2561_U (https://github.com/adafruit/Adafruit_TSL2561)
 - Adafruit_Sensor (https://github.com/adafruit/Adafruit_Sensor)
+- RTCLib (https://github.com/adafruit/RTClib)
+
 
 
 References:
