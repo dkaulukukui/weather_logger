@@ -32,6 +32,15 @@
 #include <SPI.h>
 #include <SD.h>
 
+#define DEBUG  //debug to spit out serial debugging information
+
+#ifdef DEBUG
+ #define DEBUG_PRINT(x)  Serial.println (x)
+#else
+ #define DEBUG_PRINT(x)
+#endif
+
+
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //Hardware pin definitions
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -73,20 +82,22 @@ Adafruit_TSL2561_Unified tsl = Adafruit_TSL2561_Unified(TSL2561_ADDR_FLOAT, 1234
 long lastWindCheck = 0;
 volatile long lastWindIRQ = 0;
 volatile byte windClicks = 0;
-
 float windspeedmph; // [mph instantaneous wind speed]
 
-const char delimeter = ' ';
-
 // volatiles are subject to modification by IRQs
-volatile unsigned long raintime, rainlast, raininterval, rain;
+volatile unsigned long raintime, rainlast, raininterval;
+volatile unsigned long rain = 0;  //rain counter
 
-volatile int rainHour[60]; //60 floating numbers to keep track of 60 minutes of rain
-
-byte minutes; //Keeps track of where we are in various arrays of data
-
+String filename;
 File dataFile;  //data file object
+byte file_date = 0;  //date of file currently active 
+uint8_t logged_min = 0;  //minute flag for logging
 
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//Configuration settings
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+const char delimeter = ',';  //data log file delimeter
+const byte LOG_INTERVAL = 2; //logging interval in minutes
 
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //Interrupt routines (these are called by the hardware interrupts, not by the main code)
@@ -101,7 +112,7 @@ void rainIRQ(){
     if (raininterval > 10) // ignore switch-bounce glitches less than 10mS after initial edge
     {
         //dailyrainin += 1; //Each dump is 0.011" of water
-        rainHour[minutes] += 1; //Increase this minute's amount of rain
+        rain += 1; //Increase this minute's amount of rain
 
         rainlast = raintime; // set up for next event
     }
@@ -124,7 +135,9 @@ void wspeedIRQ() {
 void setup() {
   // put your setup code here, to run once:
 
+    #ifdef DEBUG
     Serial.begin(9600);
+    #endif
 
     pinMode(WSPEED, INPUT_PULLUP); // input from wind meters windspeed sensor
     pinMode(RAIN, INPUT_PULLUP); // input from rain gauge sensor
@@ -139,46 +152,44 @@ void setup() {
 
 ///System initializations and checks
 
-  Serial.println("Init SD");
+   DEBUG_PRINT("Init SD");
 
   if (!SD.begin(chipSelect)) {
-    Serial.println("SD init failed!");
+    DEBUG_PRINT("SD init failed!");
   } else {
-    Serial.println("SD card good");
+    DEBUG_PRINT("SD card good");
   }
 
   if (! rtc.begin()) {
-    Serial.println("No RTC");
+    DEBUG_PRINT("No RTC");
     while (1);
   }
 
   if (! rtc.isrunning()) {
-    Serial.println("start RTC");
+    DEBUG_PRINT("start RTC");
     // following line sets the RTC to the date & time this sketch was compiled
      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));   
-     Serial.print("Time set to compile time");
+    DEBUG_PRINT("Time set to compile time"); 
     // This line sets the RTC with an explicit date & time, for example to set
     // January 21, 2014 at 3am you would call:
      //rtc.adjust(DateTime(2018, 4, 8, 18, 24, 0));
   }
 
     if (! am2315.begin()) {
-     Serial.println("No AM2315");
+      DEBUG_PRINT("No AM2315");
      while (1);
     }
 
     if(!tsl.begin()){
     /* There was a problem detecting the TSL2561 ... check your connections */
-    Serial.print("no TSL2561");
+    DEBUG_PRINT("no TSL2561");
     while(1);
     }
 
       /* Setup the sensor gain and integration time */
     configureSensor();
-    
-    Serial.println("Setup Complete");
 
-    Serial.println(build_header());
+    DEBUG_PRINT("Setup Complete");
 
 }
 
@@ -187,28 +198,33 @@ void setup() {
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 void loop() {
 
-  DateTime now = rtc.now();  
-
+  DateTime now = rtc.now();
+    
   String log_string;
 
-  //Every hour reset the hourly counts
-    //hourly_reset_counts()
+  //Everyday create a new file and zeroize daily counts
+  if(now.day() != file_date){
+      filename = build_filename(now); //set filename to use for this day
 
-  //Everyday at midnight create a new file and zeroize daily counts
-      //filename = build_filename(now); //set filename to use for this event
-      //log_to_SD(filename, build_header());  //log data header to file
+      DEBUG_PRINT("filename created:");
+      DEBUG_PRINT(filename);
+      
+      log_to_SD(filename, build_header());  //log data header to file
+      file_date = now.day(); //update day of current file being logged to
+  }
 
   //Every interval amount of time log data to the file
+  if(now.minute()%LOG_INTERVAL == 0 && now.minute() != logged_min){
 
       //build string to log to file
       log_string = build_time_stamp(now); //add time_stamp
       log_string += build_data_fields(); //append data fields to string
-      //log_to_SD(filename, log_string); //log to file
+      
+      log_to_SD(filename, log_string); //log to file
 
-      Serial.println(log_string);
+      logged_min = now.minute(); //update logged minute variable to check
 
-  delay(1000);
-
+  }
 
 }
 
@@ -287,15 +303,18 @@ int get_light(){
 }
 
 float get_rain(){    
-    int rainin;  
+  
+    //int rainin;  
     float rainin_flt;
-
+/*   old get rain code
       //do math to calc cumulative rain
     rainin = 0;  
     for(int i = 0 ; i < 60 ; i++)
         rainin += rainHour[i];
+ */
 
-    rainin_flt = rainin * 0.011;
+    rainin_flt = rain * 0.011; //convert rain value into float number in inches
+    rain = 0;     //reset rain counter
 
     return(rainin_flt);
   
@@ -331,10 +350,10 @@ void configureSensor(void){
   // tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_402MS);  /* 16-bit data but slowest conversions */
 
   /* Update these values depending on what you've set above! */  
-  Serial.println("------------------------------------");
-  Serial.print  ("Gain:         "); Serial.println("Auto");
-  Serial.print  ("Timing:       "); Serial.println("13 ms");
-  Serial.println("------------------------------------");
+  //Serial.println("------------------------------------");
+  //Serial.print  ("Gain:         "); Serial.println("Auto");
+  //Serial.print  ("Timing:       "); Serial.println("13 ms");
+  //Serial.println("------------------------------------");
 }
 
 //builds and returns logfile timestamp string
@@ -353,10 +372,10 @@ String build_time_stamp(DateTime now){
       
       if(now.minute() <10){ time_stamp +="0";}
       time_stamp += now.minute();      
-      time_stamp += ":";
+      /*time_stamp += ":";
 
       if(now.second() <10){ time_stamp +="0";} 
-      time_stamp += now.second();
+      time_stamp += now.second();*/
       time_stamp += delimeter;
       
       return time_stamp;  
@@ -369,16 +388,13 @@ String build_filename(DateTime now){
       //build string to log to file
       //filename needs to comply with the 8.3 filenaming convention
       //example:  12345678.123, textfile.txt, 
-      //current filename format is: 03090759.csv, or MMDDHHMM.csv
+      //current filename format is: 20180525.csv, or YYYYMMDD.csv
 
-      if(now.month() <10){ time_stamp ="0";} 
+      time_stamp = now.year(); 
+      if(now.month() <10){ time_stamp +="0";} 
       time_stamp += now.month(); 
       if(now.day() <10){ time_stamp +="0";} 
       time_stamp += now.day();
-      if(now.hour() <10){ time_stamp +="0";}
-      time_stamp += now.hour();
-      if(now.minute() <10){ time_stamp +="0";}
-      time_stamp += now.minute();
       time_stamp += ".csv";
 
       return time_stamp;  
@@ -461,23 +477,17 @@ void log_to_SD(String file_name, String log_string){
                 dataFile.println(log_string);
                 dataFile.close();
                 // print to the serial port too:
-                Serial.println(log_string);  //send string to serial connection
+                DEBUG_PRINT(log_string);  //send string to serial connection
               }
               // if the file isn't open, pop up an error:
               else {
-                Serial.print("error opening: ");
-                Serial.println(file_name);
+                DEBUG_PRINT("error opening: ");
+                DEBUG_PRINT(file_name);
               }
 
 }
 
-void hourly_reset_counts(){
-        for(int i = 0 ; i < 60 ; i++)
-        rainHour[i] = 0;
 
-}
 
-void daily_reset_counts(){
 
-}
 
