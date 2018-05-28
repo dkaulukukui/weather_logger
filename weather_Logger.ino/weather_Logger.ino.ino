@@ -139,6 +139,7 @@ void setup() {
     #ifdef WATCHDOG
       wdt_reset(); //Pet the dog
       wdt_disable(); //We don't want the watchdog during init
+      delay(3000); // Done so that the Arduino doesn't keep resetting infinitely in case of wrong configuration 
     #endif
 
     #ifdef DEBUG
