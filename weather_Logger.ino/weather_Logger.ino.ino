@@ -32,6 +32,8 @@
 #include <SPI.h>
 #include <SD.h>
 
+
+#define WATCHDOG  //define WATCHDOG to use watch dog timer
 #define DEBUG  //debug to spit out serial debugging information
 
 #ifdef DEBUG
@@ -133,7 +135,11 @@ void wspeedIRQ() {
 //SETUP
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 void setup() {
-  // put your setup code here, to run once:
+
+    #ifdef WATCHDOG
+      wdt_reset(); //Pet the dog
+      wdt_disable(); //We don't want the watchdog during init
+    #endif
 
     #ifdef DEBUG
     Serial.begin(9600);
@@ -186,8 +192,13 @@ void setup() {
     while(1);
     }
 
-      /* Setup the sensor gain and integration time */
+      /* Setup the light sensor gain and integration time */
     configureSensor();
+
+    //Watch Dog Timer Initialization
+    #ifdef WATCHDOG
+      wdt_enable(WDTO_8S); //Unleash the beast
+    #endif
 
     DEBUG_PRINT("Setup Complete");
 
@@ -197,6 +208,10 @@ void setup() {
 //MAIN LOOP
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 void loop() {
+
+  #ifdef WATCHDOG
+      wdt_reset(); //Pet the dog
+  #endif
 
   DateTime now = rtc.now();
     
